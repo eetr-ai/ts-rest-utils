@@ -425,9 +425,12 @@ export class RestClient<Ctx = unknown> {
        * that arrives after the attempt has already timed out must not be
        * allowed to start another one.
        */
-      const ask = async (decision: Promise<boolean> | boolean): Promise<boolean> => {
+      const ask = async (decide: () => Promise<boolean> | boolean): Promise<boolean> => {
         try {
-          return await untilAborted(Promise.resolve(decision), composed.signal);
+          // Invoked inside the try, not by the caller: a hook that throws
+          // synchronously would otherwise escape before this ran, leaving the
+          // response body unread and the abort listener attached.
+          return await untilAborted(Promise.resolve(decide()), composed.signal);
         } catch (error) {
           composed.cleanup();
           await discard(response);
@@ -442,12 +445,14 @@ export class RestClient<Ctx = unknown> {
       };
 
       // A rejected credential is worth one more try only if something is going
-      // to change in between — that is what the hook is for.
+      // to change in between — that is what the hook is for. Captured to a
+      // local so the closure below needs no non-null assertion.
+      const onAuthFailure = policy.onAuthFailure;
       if (
         !isLastAttempt &&
-        policy.onAuthFailure !== undefined &&
+        onAuthFailure !== undefined &&
         policy.authFailureStatuses.includes(response.status) &&
-        (await ask(policy.onAuthFailure({ ...retryContext, response })))
+        (await ask(() => onAuthFailure({ ...retryContext, response })))
       ) {
         composed.cleanup();
         await discard(response);
@@ -455,7 +460,7 @@ export class RestClient<Ctx = unknown> {
         continue;
       }
 
-      if (!isLastAttempt && (await ask(policy.retryOn(retryContext)))) {
+      if (!isLastAttempt && (await ask(() => policy.retryOn(retryContext)))) {
         const delay = retryDelay(policy, response, attempt);
         composed.cleanup();
         await discard(response);
