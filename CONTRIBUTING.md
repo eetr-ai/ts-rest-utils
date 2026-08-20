@@ -49,7 +49,7 @@ rejects one that isn't conventional.
 
 Examples:
 
-```
+```text
 feat: add retry policy with configurable backoff
 fix: decode application/json responses that carry a charset
 docs: document the authProvider hook
