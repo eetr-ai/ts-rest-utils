@@ -82,6 +82,20 @@ describe("the token request", () => {
     expect(decoded).toBe("id+with+space:pa%3Ass%2Fword");
   });
 
+  it.each([
+    ["tilde~", "tilde%7E"],
+    ["bang!", "bang%21"],
+    ["paren(s)", "paren%28s%29"],
+    ["quote'x", "quote%27x"],
+  ])("form-encodes %j strictly, not as encodeURIComponent would", async (secret, expected) => {
+    // encodeURIComponent leaves these five characters alone; the
+    // application/x-www-form-urlencoded algorithm the spec points at does not.
+    const fetch = tokenEndpoint(granted());
+    await createClientCredentialsAuth({ ...base, clientSecret: secret, fetch }).getToken();
+    const header = fetch.requests[0]?.headers.get("Authorization") ?? "";
+    expect(atob(header.replace("Basic ", ""))).toBe(`client-1:${expected}`);
+  });
+
   it("puts the credentials in the body when asked to", async () => {
     const fetch = tokenEndpoint(granted());
     await createClientCredentialsAuth({
@@ -296,6 +310,20 @@ describe("failures", () => {
     await expect(createClientCredentialsAuth({ ...base, fetch }).getToken()).rejects.toMatchObject({
       error: "invalid_response",
     });
+  });
+
+  it("gives up on a token endpoint that never answers", async () => {
+    // Nothing else bounds getToken when it is called directly.
+    const hanging = vi.fn(
+      (_u: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      createClientCredentialsAuth({ ...base, fetch: hanging, timeoutMs: 25 }).getToken(),
+    ).rejects.toMatchObject({ name: "OAuthError", error: "timeout" });
   });
 
   it("wraps a transport failure", async () => {

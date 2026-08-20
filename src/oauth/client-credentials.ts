@@ -46,6 +46,15 @@ export interface ClientCredentialsConfig {
   /** The `fetch` to use. @default globalThis.fetch */
   fetch?: typeof fetch;
 
+  /**
+   * Abort a token request that takes longer than this, in milliseconds.
+   *
+   * A client that bounds its own requests already covers the provider it calls,
+   * but nothing bounds `getToken` when it is used directly, nor a client with
+   * no `timeoutMs` of its own.
+   */
+  timeoutMs?: number;
+
   /** Header to carry the token. @default "Authorization" */
   headerName?: string;
   /** Scheme prefixed to the token. @default the server's token_type, or "Bearer" */
@@ -208,17 +217,37 @@ async function requestToken(config: ClientCredentialsConfig): Promise<StoredToke
     body.set("client_secret", clientSecret);
   }
 
+  // Composed by hand rather than with AbortSignal.timeout, which is missing
+  // from some React Native runtimes.
+  const controller = new AbortController();
+  const timer =
+    config.timeoutMs !== undefined && config.timeoutMs > 0
+      ? setTimeout(() => controller.abort(), config.timeoutMs)
+      : undefined;
+
   let response: Response;
   try {
-    response = await fetchImpl(config.tokenUrl, { method: "POST", headers, body });
+    response = await fetchImpl(config.tokenUrl, {
+      method: "POST",
+      headers,
+      body,
+      signal: controller.signal,
+    });
   } catch (cause) {
+    const timedOut = controller.signal.aborted;
     throw new OAuthError({
-      error: "network_error",
-      errorDescription: cause instanceof Error ? cause.message : String(cause),
+      error: timedOut ? "timeout" : "network_error",
+      errorDescription: timedOut
+        ? `the token request exceeded ${String(config.timeoutMs)}ms`
+        : cause instanceof Error
+          ? cause.message
+          : String(cause),
       status: 0,
       tokenUrl: config.tokenUrl,
       cause,
     });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 
   const payload = await readJson(response, config.tokenUrl);
@@ -308,8 +337,16 @@ function basicCredentials(clientId: string, clientSecret: string): string {
   return base64(new TextEncoder().encode(encoded));
 }
 
+/**
+ * The `application/x-www-form-urlencoded` serialisation of a single value.
+ *
+ * Not `encodeURIComponent`, which leaves `!`, `'`, `(`, `)`, and `~` alone
+ * where form encoding percent-encodes them — a secret containing any of those
+ * would otherwise be sent wrong. URLSearchParams implements the exact algorithm
+ * the spec points at, so the platform does it rather than a hand-rolled table.
+ */
 function formEncode(value: string): string {
-  return encodeURIComponent(value).replaceAll("%20", "+");
+  return new URLSearchParams({ v: value }).toString().slice("v=".length);
 }
 
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

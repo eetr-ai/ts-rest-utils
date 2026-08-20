@@ -197,9 +197,11 @@ const api = new RestClient({
 Tokens are cached and refreshed before they expire, and a burst of concurrent
 requests on a cold cache mints **one** token rather than one each.
 
-There is no refresh token involved. The client-credentials grant does not issue
-one — RFC 6749 §4.4.3, unchanged in OAuth 2.1 — so refreshing means asking for
-another token, which is what happens automatically.
+Refresh tokens do not come into it. RFC 6749 §4.4.3 says this grant SHOULD NOT
+issue one, and OAuth 2.1 keeps that, so refreshing means asking for another
+token — which is what happens automatically. A server that issues one anyway is
+simply not used here: the client re-authenticates instead, which it can always
+do, since it holds the credentials in the first place.
 
 #### Where tokens are kept
 
@@ -208,6 +210,8 @@ copy, which is usually fine and occasionally not. The interface is three
 methods, so sharing one is short:
 
 ```ts
+import type { TokenStore } from "@eetr/ts-rest-utils/oauth";
+
 const store: TokenStore = {
   get: async (key) => JSON.parse((await redis.get(key)) ?? "null") ?? undefined,
   set: async (key, token) => void (await redis.set(key, JSON.stringify(token))),
