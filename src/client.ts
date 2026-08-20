@@ -180,6 +180,31 @@ function composeSignal(
   };
 }
 
+/**
+ * Reject as soon as `signal` aborts, however long the promise takes.
+ *
+ * The hooks a caller supplies — an auth provider minting a token, a refresh
+ * callback — are ordinary promises, and there is no way to cancel arbitrary
+ * user code. What this does is stop *waiting* on one: the request fails on its
+ * deadline instead of hanging behind a hook that never settles. The hook itself
+ * runs on to completion, unobserved.
+ */
+async function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason as Error;
+
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason as Error);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /** Resolve a possibly-callable header source. */
 async function resolveHeaderSource(
   source: HeaderSource | undefined,
@@ -312,20 +337,40 @@ export class RestClient<Ctx = unknown> {
        suggests, would issue all the attempts at once. */
 
     for (let attempt = 1; attempt <= policy.attempts; attempt++) {
-      const headers = await this.buildHeaders({
-        url,
-        method,
-        service: options.service,
-        isFormData,
-        context,
-        attempt,
-        contentType: encoded.contentType,
-        initHeaders: options.init?.headers,
-        perCall: options.headers,
-      });
-
+      // Composed first, so building the headers is inside the deadline too.
+      // An auth provider is the most likely thing in a request to make its own
+      // network call, and a timeout that started after it would not cover the
+      // one part most able to hang.
       const composed = composeSignal(timeoutMs, callerSignal ?? undefined);
       const startedAt = Date.now();
+
+      let headers: Headers;
+      try {
+        headers = await untilAborted(
+          this.buildHeaders({
+            url,
+            method,
+            service: options.service,
+            isFormData,
+            context,
+            attempt,
+            contentType: encoded.contentType,
+            initHeaders: options.init?.headers,
+            perCall: options.headers,
+          }),
+          composed.signal,
+        );
+      } catch (error) {
+        composed.cleanup();
+        if (callerSignal?.aborted) {
+          throw new NetworkError({ url, method, cause: callerSignal.reason });
+        }
+        if (composed.timedOut()) {
+          throw new TimeoutError({ url, method, timeoutMs: timeoutMs ?? 0, cause: error });
+        }
+        throw error;
+      }
+
       logger.request?.({ method, url, headers, attempt });
 
       // `body` is assigned only when there is one: under
@@ -375,13 +420,34 @@ export class RestClient<Ctx = unknown> {
       const retryContext = { attempt, response, url, method };
       const isLastAttempt = attempt >= policy.attempts;
 
+      /**
+       * Ask a retry hook, but never outlive the deadline doing it. A decision
+       * that arrives after the attempt has already timed out must not be
+       * allowed to start another one.
+       */
+      const ask = async (decision: Promise<boolean> | boolean): Promise<boolean> => {
+        try {
+          return await untilAborted(Promise.resolve(decision), composed.signal);
+        } catch (error) {
+          composed.cleanup();
+          await discard(response);
+          if (callerSignal?.aborted) {
+            throw new NetworkError({ url, method, cause: callerSignal.reason });
+          }
+          if (composed.timedOut()) {
+            throw new TimeoutError({ url, method, timeoutMs: timeoutMs ?? 0, cause: error });
+          }
+          throw error;
+        }
+      };
+
       // A rejected credential is worth one more try only if something is going
       // to change in between — that is what the hook is for.
       if (
         !isLastAttempt &&
         policy.onAuthFailure !== undefined &&
         policy.authFailureStatuses.includes(response.status) &&
-        (await policy.onAuthFailure({ ...retryContext, response }))
+        (await ask(policy.onAuthFailure({ ...retryContext, response })))
       ) {
         composed.cleanup();
         await discard(response);
@@ -389,7 +455,7 @@ export class RestClient<Ctx = unknown> {
         continue;
       }
 
-      if (!isLastAttempt && (await policy.retryOn(retryContext))) {
+      if (!isLastAttempt && (await ask(policy.retryOn(retryContext)))) {
         const delay = retryDelay(policy, response, attempt);
         composed.cleanup();
         await discard(response);

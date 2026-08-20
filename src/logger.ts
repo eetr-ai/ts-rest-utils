@@ -83,12 +83,18 @@ export function redactHeaders(headers: Headers): Record<string, string> {
 }
 
 /**
- * A URL safe to write to a log, with sensitive query values replaced.
+ * A URL safe to write to a log, with credentials replaced wherever they hide.
  *
- * Parameter names are kept, as with headers: seeing that a request carried an
- * `access_token` is useful, and seeing its value never is. A URL that cannot be
- * parsed is returned unchanged rather than dropped, since a malformed URL is
- * usually the thing being debugged.
+ * Three places, all of which happen in practice:
+ *
+ * - the query string (`?access_token=`, a signed link)
+ * - the fragment, which is where an OAuth implicit-flow redirect puts a token
+ * - the userinfo of `https://user:password@host`
+ *
+ * Names are kept and values replaced, as with headers: knowing a request
+ * carried an `access_token` is useful, and knowing its value never is. A URL
+ * that cannot be parsed is returned unchanged rather than dropped, since a
+ * malformed URL is usually the thing being debugged.
  */
 export function redactUrl(url: string): string {
   let parsed: URL;
@@ -99,9 +105,18 @@ export function redactUrl(url: string): string {
   }
 
   let changed = false;
-  // The snapshot is load-bearing: `set` collapses repeated keys into a single
-  // entry, so `?token=a&token=b` shortens the list mid-iteration and a live
-  // iterator would skip past the remainder, leaving a secret unredacted.
+
+  // Credentials in the authority. A password is always sensitive; a bare
+  // username is an identifier, and identifying the caller is half of what a
+  // log is for.
+  if (parsed.password !== "") {
+    parsed.password = "<redacted>";
+    changed = true;
+  }
+
+  // The snapshot is load-bearing: `set` collapses repeated keys into one entry,
+  // so `?token=a&token=b` shortens the list mid-iteration and a live iterator
+  // would skip the remainder, leaving a secret unredacted.
   // oxlint-disable-next-line no-useless-spread
   for (const name of [...parsed.searchParams.keys()]) {
     if (!REDACTED_PARAM.test(name)) continue;
@@ -109,7 +124,38 @@ export function redactUrl(url: string): string {
     changed = true;
   }
 
+  const fragment = redactFragment(parsed.hash);
+  if (fragment !== parsed.hash) {
+    parsed.hash = fragment;
+    changed = true;
+  }
+
   return changed ? parsed.toString() : url;
+}
+
+/**
+ * Redact a fragment that carries parameters.
+ *
+ * An OAuth implicit-flow redirect returns the token here rather than in the
+ * query, precisely so it is not sent to the server — which does nothing to stop
+ * a client logging the whole URL. A fragment that is a plain anchor has no `=`
+ * in it and is left alone.
+ */
+function redactFragment(hash: string): string {
+  if (hash.length <= 1 || !hash.includes("=")) return hash;
+
+  const params = new URLSearchParams(hash.slice(1));
+  let changed = false;
+
+  // Snapshotted for the same reason as above.
+  // oxlint-disable-next-line no-useless-spread
+  for (const name of [...params.keys()]) {
+    if (!REDACTED_PARAM.test(name)) continue;
+    params.set(name, "<redacted>");
+    changed = true;
+  }
+
+  return changed ? `#${params.toString()}` : hash;
 }
 
 /** A logger that does nothing. The default, because a library should be quiet. */
