@@ -3,6 +3,10 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Lets the release pull request be rebuilt on demand. Release Please only
+  # rewrites its branch when the release contents change, so a fix that does not
+  # appear in the changelog leaves an existing release pull request stale.
+  workflow_dispatch:
 
 permissions:
   contents: write
