@@ -225,68 +225,83 @@ async function requestToken(config: ClientCredentialsConfig): Promise<StoredToke
       ? setTimeout(() => controller.abort(), config.timeoutMs)
       : undefined;
 
-  let response: Response;
-  try {
-    response = await fetchImpl(config.tokenUrl, {
-      method: "POST",
-      headers,
-      body,
-      signal: controller.signal,
-    });
-  } catch (cause) {
-    const timedOut = controller.signal.aborted;
-    throw new OAuthError({
-      error: timedOut ? "timeout" : "network_error",
-      errorDescription: timedOut
-        ? `the token request exceeded ${String(config.timeoutMs)}ms`
-        : cause instanceof Error
-          ? cause.message
-          : String(cause),
+  /** An expired deadline, reported identically wherever it lands. */
+  const deadlineExpired = (cause: unknown) =>
+    new OAuthError({
+      error: "timeout",
+      errorDescription: `the token request exceeded ${String(config.timeoutMs)}ms`,
       status: 0,
       tokenUrl: config.tokenUrl,
       cause,
     });
+
+  try {
+    let response: Response;
+    try {
+      response = await fetchImpl(config.tokenUrl, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal,
+      });
+    } catch (cause) {
+      if (controller.signal.aborted) throw deadlineExpired(cause);
+      throw new OAuthError({
+        error: "network_error",
+        errorDescription: cause instanceof Error ? cause.message : String(cause),
+        status: 0,
+        tokenUrl: config.tokenUrl,
+        cause,
+      });
+    }
+
+    // The deadline stays armed while the body is read. A response arriving only
+    // means its headers did, and a token endpoint that stalls mid-body would
+    // otherwise hang for as long as the connection stayed open.
+    let payload: unknown;
+    try {
+      payload = await readJson(response, config.tokenUrl);
+    } catch (cause) {
+      if (controller.signal.aborted) throw deadlineExpired(cause);
+      throw cause;
+    }
+
+    if (!response.ok) {
+      const description = stringField(payload, "error_description");
+      const uri = stringField(payload, "error_uri");
+      throw new OAuthError({
+        error: stringField(payload, "error") ?? `http_${response.status}`,
+        ...(description !== undefined && { errorDescription: description }),
+        ...(uri !== undefined && { errorUri: uri }),
+        status: response.status,
+        tokenUrl: config.tokenUrl,
+      });
+    }
+
+    const accessToken = stringField(payload, "access_token");
+    if (!accessToken) {
+      throw new OAuthError({
+        error: "invalid_response",
+        errorDescription: "the token response carried no access_token",
+        status: response.status,
+        tokenUrl: config.tokenUrl,
+      });
+    }
+
+    const expiresIn = numberField(payload, "expires_in");
+    const grantedScope = stringField(payload, "scope");
+
+    return {
+      accessToken,
+      tokenType: stringField(payload, "token_type") ?? "Bearer",
+      // A server that omits expires_in has told us nothing; a conservative
+      // default beats caching indefinitely and being rejected later.
+      expiresAt: Date.now() + (expiresIn ?? 300) * 1000,
+      ...(grantedScope !== undefined && { scope: grantedScope }),
+    };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-
-  const payload = await readJson(response, config.tokenUrl);
-
-  if (!response.ok) {
-    throw new OAuthError({
-      error: stringField(payload, "error") ?? `http_${response.status}`,
-      ...(stringField(payload, "error_description") !== undefined && {
-        errorDescription: stringField(payload, "error_description")!,
-      }),
-      ...(stringField(payload, "error_uri") !== undefined && {
-        errorUri: stringField(payload, "error_uri")!,
-      }),
-      status: response.status,
-      tokenUrl: config.tokenUrl,
-    });
-  }
-
-  const accessToken = stringField(payload, "access_token");
-  if (!accessToken) {
-    throw new OAuthError({
-      error: "invalid_response",
-      errorDescription: "the token response carried no access_token",
-      status: response.status,
-      tokenUrl: config.tokenUrl,
-    });
-  }
-
-  const expiresIn = numberField(payload, "expires_in");
-  const grantedScope = stringField(payload, "scope");
-
-  return {
-    accessToken,
-    tokenType: stringField(payload, "token_type") ?? "Bearer",
-    // A server that omits expires_in has told us nothing; a conservative
-    // default beats caching indefinitely and being rejected later.
-    expiresAt: Date.now() + (expiresIn ?? 300) * 1000,
-    ...(grantedScope !== undefined && { scope: grantedScope }),
-  };
 }
 
 /** Parse a token response, reporting an unusable body as an OAuth failure. */

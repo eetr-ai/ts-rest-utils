@@ -326,6 +326,30 @@ describe("failures", () => {
     ).rejects.toMatchObject({ name: "OAuthError", error: "timeout" });
   });
 
+  it("gives up on a token endpoint that stalls mid-body", async () => {
+    // Headers arriving is not the same as the body arriving. Without the
+    // deadline staying armed, this hangs for as long as the connection does.
+    const stalling = vi.fn(
+      async (_u: unknown, init?: RequestInit) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"access_token":'));
+              init?.signal?.addEventListener("abort", () => {
+                controller.error(new Error("aborted"));
+              });
+              // Never closes.
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      createClientCredentialsAuth({ ...base, fetch: stalling, timeoutMs: 25 }).getToken(),
+    ).rejects.toMatchObject({ name: "OAuthError", error: "timeout" });
+  });
+
   it("wraps a transport failure", async () => {
     // Named for what it is: a local called `fetch` makes `typeof fetch` refer
     // to itself rather than to the global.
