@@ -63,13 +63,26 @@ new RestClient({
   baseUrl: "https://api.example.com",
   authProvider: () => ({ Authorization: `Bearer ${getToken()}` }),
 });
+```
 
-// An API key
+```ts
+// A static API key — server-side only
+const apiKey = process.env.API_KEY;
+if (!apiKey) throw new Error("API_KEY is not set");
+
 new RestClient({
   baseUrl: "https://api.example.com",
-  authProvider: () => ({ "X-Api-Key": process.env.API_KEY! }),
+  authProvider: () => ({ "X-Api-Key": apiKey }),
 });
 ```
+
+> **A static secret belongs on a server, not in a bundle.** This package runs in
+> a browser and in React Native, and anything you put in an `authProvider` there
+> ships to the device — a bundled API key is readable by anyone who has the app.
+> From a client, use a credential scoped to the end user (see
+> [refreshing an expired credential](#refreshing-an-expired-credential)), a key
+> the vendor designates as publishable, or route the call through a backend that
+> holds the secret.
 
 ### Refreshing an expired credential
 
