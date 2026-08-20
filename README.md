@@ -170,6 +170,72 @@ const forRequest = api.with({ context: { userId, locale } });
 await forRequest.get("/preferences");
 ```
 
+### OAuth 2.1 client credentials
+
+Machine-to-machine auth ships as a subpath export, so the core stays small for
+anyone who does not need it. Still no runtime dependencies.
+
+```ts
+import { RestClient } from "@eetr/ts-rest-utils";
+import { createClientCredentialsAuth } from "@eetr/ts-rest-utils/oauth";
+
+const auth = createClientCredentialsAuth({
+  tokenUrl: "https://auth.example.com/oauth2/token",
+  clientId: process.env.CLIENT_ID!,
+  clientSecret: process.env.CLIENT_SECRET!,
+  scope: ["invoices:read"],
+});
+
+const api = new RestClient({
+  baseUrl: "https://api.example.com",
+  authProvider: auth.authProvider,
+  // Rejected token? Drop it, mint a fresh one, try once more.
+  retry: { onAuthFailure: auth.onAuthFailure },
+});
+```
+
+Tokens are cached and refreshed before they expire, and a burst of concurrent
+requests on a cold cache mints **one** token rather than one each.
+
+There is no refresh token involved. The client-credentials grant does not issue
+one — RFC 6749 §4.4.3, unchanged in OAuth 2.1 — so refreshing means asking for
+another token, which is what happens automatically.
+
+#### Where tokens are kept
+
+The default store is in-process. Across several processes each holds its own
+copy, which is usually fine and occasionally not. The interface is three
+methods, so sharing one is short:
+
+```ts
+const store: TokenStore = {
+  get: async (key) => JSON.parse((await redis.get(key)) ?? "null") ?? undefined,
+  set: async (key, token) => void (await redis.set(key, JSON.stringify(token))),
+  delete: async (key) => void (await redis.del(key)),
+};
+
+createClientCredentialsAuth({ /* … */, store });
+```
+
+#### Client authentication
+
+`client_secret_basic` by default, as OAuth 2.1 prefers. `client_secret_post`
+puts the credentials in the body instead. For `private_key_jwt`, supply the
+assertion yourself — signing one means a crypto and key-handling dependency,
+and this package has none:
+
+```ts
+createClientCredentialsAuth({
+  tokenUrl: "https://auth.example.com/oauth2/token",
+  clientId: process.env.CLIENT_ID!,
+  clientAssertion: () => signJwt({/* your signer */}),
+});
+```
+
+A failing token request throws an `OAuthError` carrying the RFC 6749 `error`
+code, the description, and the status — including when the endpoint answers
+with something that is not JSON at all.
+
 ## Options
 
 | Option         | What it does                                                       |
