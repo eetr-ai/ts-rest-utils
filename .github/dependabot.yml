@@ -21,6 +21,24 @@ updates:
           - minor
           - patch
 
+    ignore:
+      # TypeScript 7 is held back by the build, not by this code — `tsc
+      # --noEmit` passes under it. tsup generates the declaration bundle with a
+      # copy of rollup-plugin-dts compiled into its own dist and pinned against
+      # TypeScript 5, which crashes on the newer compiler API:
+      #
+      #   TypeError: Cannot read properties of undefined
+      #     (reading 'useCaseSensitiveFileNames')
+      #
+      # Because the plugin is inlined rather than a dependency, no override or
+      # resolution reaches it — the fix has to come from tsup. Revisit when tsup
+      # ships a declaration pipeline that works with TypeScript 7, or if we move
+      # declaration generation to `tsc --emitDeclarationOnly`, which already
+      # works. Remove this entry then.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
