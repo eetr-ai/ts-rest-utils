@@ -31,6 +31,7 @@ describe("public surface", () => {
     "postApi",
     "putApi",
     "redactHeaders",
+    "redactUrl",
     "resetDefaultClient",
     "resolveBase",
     "withQuery",

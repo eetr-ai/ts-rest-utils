@@ -53,8 +53,15 @@ export function withQuery(url: string, params?: QueryParams): string {
   const query = search.toString();
   if (!query) return url;
 
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}${query}`;
+  // The fragment always comes last. Appending to the whole string would put the
+  // query inside it — `https://x/#top` would become `https://x/#top?a=1`, where
+  // `?a=1` is part of the fragment and never reaches the server.
+  const hash = url.indexOf("#");
+  const base = hash === -1 ? url : url.slice(0, hash);
+  const fragment = hash === -1 ? "" : url.slice(hash);
+
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}${query}${fragment}`;
 }
 
 /**

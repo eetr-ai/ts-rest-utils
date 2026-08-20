@@ -51,6 +51,7 @@ export {
   consoleLogger,
   noopLogger,
   redactHeaders,
+  redactUrl,
   type ErrorLogEvent,
   type Logger,
   type RequestLogEvent,

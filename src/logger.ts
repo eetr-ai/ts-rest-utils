@@ -51,6 +51,17 @@ const REDACTED_HEADERS = new Set([
 /** Catches `x-api-key`, `x-auth-token`, `x-session-secret`, and friends. */
 const REDACTED_PATTERN = /(?:token|secret|api-?key|credential|password|signature|assertion)/i;
 
+/**
+ * Query parameters whose values are never logged.
+ *
+ * Credentials are not supposed to travel in a URL, and they do anyway —
+ * `?access_token=`, a signed download link, an OAuth `code` on a redirect. A
+ * logged URL outlives the request, so the same rule that applies to headers
+ * applies here.
+ */
+const REDACTED_PARAM =
+  /(?:token|secret|api-?key|credential|password|signature|assertion|^code$|^sig$)/i;
+
 /** Whether a header's value should be replaced before logging. */
 export function isSensitiveHeader(name: string): boolean {
   const lower = name.toLowerCase();
@@ -69,6 +80,36 @@ export function redactHeaders(headers: Headers): Record<string, string> {
     safe[name] = isSensitiveHeader(name) ? "<redacted>" : value;
   });
   return safe;
+}
+
+/**
+ * A URL safe to write to a log, with sensitive query values replaced.
+ *
+ * Parameter names are kept, as with headers: seeing that a request carried an
+ * `access_token` is useful, and seeing its value never is. A URL that cannot be
+ * parsed is returned unchanged rather than dropped, since a malformed URL is
+ * usually the thing being debugged.
+ */
+export function redactUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+
+  let changed = false;
+  // The snapshot is load-bearing: `set` collapses repeated keys into a single
+  // entry, so `?token=a&token=b` shortens the list mid-iteration and a live
+  // iterator would skip past the remainder, leaving a secret unredacted.
+  // oxlint-disable-next-line no-useless-spread
+  for (const name of [...parsed.searchParams.keys()]) {
+    if (!REDACTED_PARAM.test(name)) continue;
+    parsed.searchParams.set(name, "<redacted>");
+    changed = true;
+  }
+
+  return changed ? parsed.toString() : url;
 }
 
 /** A logger that does nothing. The default, because a library should be quiet. */
@@ -92,21 +133,26 @@ export function consoleLogger(options?: {
   return {
     request({ method, url, attempt }) {
       const suffix = attempt > 1 ? ` (attempt ${attempt})` : "";
-      out.log(`${prefix} ${method} ${url}${suffix}`);
+      out.log(`${prefix} ${method} ${redactUrl(url)}${suffix}`);
     },
 
     response({ method, url, status, durationMs }) {
-      const line = `${prefix} ${method} ${url} -> ${status} (${Math.round(durationMs)}ms)`;
+      const line = `${prefix} ${method} ${redactUrl(url)} -> ${status} (${Math.round(durationMs)}ms)`;
       if (status >= 400) out.error(line);
       else out.log(line);
     },
 
     error({ method, url, error, durationMs }) {
-      out.error(`${prefix} ${method} ${url} failed after ${Math.round(durationMs)}ms:`, error);
+      out.error(
+        `${prefix} ${method} ${redactUrl(url)} failed after ${Math.round(durationMs)}ms:`,
+        error,
+      );
     },
 
     retry(event, delayMs) {
-      out.warn(`${prefix} ${event.method} ${event.url} retrying in ${Math.round(delayMs)}ms`);
+      out.warn(
+        `${prefix} ${event.method} ${redactUrl(event.url)} retrying in ${Math.round(delayMs)}ms`,
+      );
     },
   };
 }

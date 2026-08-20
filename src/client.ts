@@ -291,6 +291,12 @@ export class RestClient<Ctx = unknown> {
     const timeoutMs = options.timeoutMs ?? this.options.timeoutMs;
     const context = options.context ?? this.options.context;
 
+    // A caller can pass a signal three ways, and the composed one is assigned
+    // last when the request is built — so any signal left on a RequestInit
+    // would be quietly overwritten and their cancellation would do nothing.
+    const callerSignal =
+      options.signal ?? options.init?.signal ?? this.options.defaultInit?.signal ?? undefined;
+
     // Encoded once: re-encoding per attempt would re-stringify needlessly, and
     // a body the platform sends natively (FormData, a Blob) is reusable as-is.
     // A ReadableStream body is the exception — it cannot be replayed, so a
@@ -318,7 +324,7 @@ export class RestClient<Ctx = unknown> {
         perCall: options.headers,
       });
 
-      const composed = composeSignal(timeoutMs, options.signal);
+      const composed = composeSignal(timeoutMs, callerSignal ?? undefined);
       const startedAt = Date.now();
       logger.request?.({ method, url, headers, attempt });
 
@@ -346,8 +352,8 @@ export class RestClient<Ctx = unknown> {
 
         // A caller who aborted deliberately gets their own reason back, and is
         // never retried — they asked for this to stop.
-        if (options.signal?.aborted) {
-          throw new NetworkError({ url, method, cause: options.signal.reason });
+        if (callerSignal?.aborted) {
+          throw new NetworkError({ url, method, cause: callerSignal.reason });
         }
         if (timedOut) {
           throw new TimeoutError({ url, method, timeoutMs: timeoutMs ?? 0, cause: error });
@@ -359,12 +365,11 @@ export class RestClient<Ctx = unknown> {
 
         const delay = delayForAttempt(policy, attempt);
         logger.retry?.({ method, url, headers, attempt, error, durationMs }, delay);
-        await waitBeforeRetry(delay, options.signal, url, method);
+        await waitBeforeRetry(delay, callerSignal ?? undefined, url, method);
         continue;
       }
 
       const durationMs = Date.now() - startedAt;
-      composed.cleanup();
       logger.response?.({ method, url, headers, attempt, status: response.status, durationMs });
 
       const retryContext = { attempt, response, url, method };
@@ -378,6 +383,7 @@ export class RestClient<Ctx = unknown> {
         policy.authFailureStatuses.includes(response.status) &&
         (await policy.onAuthFailure({ ...retryContext, response }))
       ) {
+        composed.cleanup();
         await discard(response);
         logger.retry?.({ method, url, headers, attempt, status: response.status, durationMs }, 0);
         continue;
@@ -385,25 +391,44 @@ export class RestClient<Ctx = unknown> {
 
       if (!isLastAttempt && (await policy.retryOn(retryContext))) {
         const delay = retryDelay(policy, response, attempt);
+        composed.cleanup();
         await discard(response);
         logger.retry?.(
           { method, url, headers, attempt, status: response.status, durationMs },
           delay,
         );
-        await waitBeforeRetry(delay, options.signal, url, method);
+        await waitBeforeRetry(delay, callerSignal ?? undefined, url, method);
         continue;
       }
 
-      const body = await decodeBody<T>(response, decode, method);
-      return new ApiResponse<T>({
-        status: response.status,
-        bodyType: contentTypeOf(response),
-        body,
-        headers: response.headers,
-        raw: response,
-        url,
-        method,
-      });
+      // Decoding stays inside the deadline. The response arriving only means
+      // the headers arrived; a body that stalls mid-stream would otherwise hang
+      // for as long as the connection stayed open, with the timeout already
+      // disarmed. Aborting the signal cancels the body stream too.
+      try {
+        const body = await decodeBody<T>(response, decode, method);
+        return new ApiResponse<T>({
+          status: response.status,
+          bodyType: contentTypeOf(response),
+          body,
+          headers: response.headers,
+          raw: response,
+          url,
+          method,
+        });
+      } catch (error) {
+        if (callerSignal?.aborted) {
+          throw new NetworkError({ url, method, cause: callerSignal.reason });
+        }
+        if (composed.timedOut()) {
+          throw new TimeoutError({ url, method, timeoutMs: timeoutMs ?? 0, cause: error });
+        }
+        // A genuine decoding failure — malformed JSON from a server that said
+        // it was sending JSON. Surfaced as-is rather than dressed up.
+        throw error;
+      } finally {
+        composed.cleanup();
+      }
     }
 
     /* oxlint-enable no-await-in-loop */
