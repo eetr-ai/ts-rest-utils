@@ -1,0 +1,32 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  # Release Please creates and applies its own `autorelease: *` labels, and
+  # label management sits under the issues permission.
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # GITHUB_TOKEN deliberately does not trigger further workflow runs, so
+          # a release pull request it opens receives none of the CI checks that
+          # branch protection requires, and a release it publishes never raises
+          # the `release.published` event publish.yml listens for.
+          # RELEASE_PLEASE_TOKEN — a fine-grained PAT with
+          # contents/pull-requests/issues write — lifts both restrictions.
+          # The fallback keeps this workflow usable before that secret exists,
+          # at the cost of two manual steps per release: re-run CI on the
+          # release pull request so its checks report, and start publish.yml
+          # through its workflow_dispatch trigger once the release is tagged.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
