@@ -9,8 +9,17 @@ updates:
       prefix: chore
       include: scope
     groups:
+      # Minor and patch bumps are batched into one low-risk pull request.
+      # Majors are deliberately excluded so they arrive individually and get
+      # read: grouping them hides a breaking toolchain change among routine
+      # ones. A grouped TypeScript 5 -> 7 bump broke the declaration build
+      # exactly this way, because tsup's dts bundler is not TypeScript 7 ready
+      # even though the source type-checks under it.
       dev-dependencies:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: "/"
