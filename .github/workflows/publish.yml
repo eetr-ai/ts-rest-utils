@@ -3,6 +3,15 @@ name: publish
 on:
   release:
     types: [published]
+  # Escape hatch. A release created with the built-in GITHUB_TOKEN does not
+  # raise `release.published`, so until RELEASE_PLEASE_TOKEN exists this is how
+  # a release gets published.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or ref to publish from
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -17,11 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: npm
+          # No dependency cache anywhere in this workflow. This job's output is
+          # the artifact that gets published, so a poisoned cache entry would
+          # reach the registry even though the job itself holds no credential.
+          # CI caches freely; nothing it builds is published.
+          package-manager-cache: false
       - run: npm ci
       - run: npm run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -45,11 +59,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          # setup-node caches automatically when package.json names a package
+          # manager. Opted out explicitly so that adding such a field later
+          # cannot quietly wire a cache into the job holding the OIDC token.
+          package-manager-cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
