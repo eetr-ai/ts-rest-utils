@@ -62,19 +62,20 @@ docs: document the authProvider hook
 
 ## Releasing
 
-Merging to `main` opens or updates a release pull request; merging _that_ tags a
-GitHub Release, which triggers the publish workflow. The package is published to
-npm with [Trusted Publishing](https://docs.npmjs.com/trusted-publishers), so
-there is no npm token stored in this repository.
+Merging to `main` opens or updates a release pull request. Merging _that_ tags a
+GitHub Release and publishes the package, both in the same workflow run. It goes
+to npm with [Trusted Publishing](https://docs.npmjs.com/trusted-publishers), so
+no npm token is stored in this repository either.
 
-One piece of setup makes that chain work end to end. GitHub deliberately does
-not let the built-in `GITHUB_TOKEN` trigger further workflow runs, so a release
-pull request it opens gets no CI checks — which branch protection requires — and
-a release it publishes never starts `publish.yml`. Both restrictions lift with a
-`RELEASE_PLEASE_TOKEN` repository secret holding a fine-grained personal access
-token, scoped to this repository, with **contents: write**, **pull requests:
-write**, and **issues: write**. Without it the workflow still runs, but releases
-have to be published by hand to start publishing.
+Publishing runs in the same workflow run that cuts the release, rather than
+from a separate `on: release` trigger. That is deliberate: a release created
+with the built-in `GITHUB_TOKEN` does not cascade into further workflow runs,
+so a separate trigger would never fire and no personal access token is needed
+to make one.
+
+The one place that rule still shows is the release pull request itself, which
+for the same reason does not get its own CI run. Its checks have to be started
+by hand from the Actions tab before branch protection will let it merge.
 
 ## Design constraints
 

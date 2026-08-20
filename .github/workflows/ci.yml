@@ -4,6 +4,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A release pull request is opened with the built-in GITHUB_TOKEN, which by
+  # design does not start further workflow runs — so it never gets checks of its
+  # own. Running this against the release branch reports them against its head
+  # commit, which is what branch protection is waiting for.
+  workflow_dispatch:
 
 permissions:
   contents: read
