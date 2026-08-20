@@ -14,19 +14,30 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          # GITHUB_TOKEN deliberately does not trigger further workflow runs, so
-          # a release pull request it opens receives none of the CI checks that
-          # branch protection requires, and a release it publishes never raises
-          # the `release.published` event publish.yml listens for.
-          # RELEASE_PLEASE_TOKEN — a fine-grained PAT with
-          # contents/pull-requests/issues write — lifts both restrictions.
-          # The fallback keeps this workflow usable before that secret exists,
-          # at the cost of two manual steps per release: re-run CI on the
-          # release pull request so its checks report, and start publish.yml
-          # through its workflow_dispatch trigger once the release is tagged.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # Publishing runs here, in the same run that cut the release, rather than from
+  # an `on: release` trigger. A release created with the built-in GITHUB_TOKEN
+  # deliberately does not cascade into further workflow runs, so a separate
+  # trigger would simply never fire.
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # A called workflow's token is capped by the calling job's, and the cap is
+    # checked before any job is scheduled — so a scope missing here fails the
+    # whole run at startup rather than only the job that needed it.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      ref: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
