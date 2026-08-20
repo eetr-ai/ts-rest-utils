@@ -30,8 +30,9 @@ npm run lint && npm run format:check && npm run typecheck && npm test && npm run
 ```
 
 CI additionally runs `npm pack --dry-run`, to confirm the published tarball
-contains only `dist/`, `README.md`, and `LICENSE`, and runs the test suite
-against Node 20, 22, 24, and 26 rather than only your local version.
+contains only `dist/`, `README.md`, `LICENSE`, and the `package.json` npm always
+includes — and runs the test suite against Node 20, 22, 24, and 26 rather than
+only your local version.
 
 ## Commit and pull request titles
 
