@@ -5,11 +5,11 @@ on:
     types: [published]
   # Escape hatch. A release created with the built-in GITHUB_TOKEN does not
   # raise `release.published`, so until RELEASE_PLEASE_TOKEN exists this is how
-  # a release gets published.
+  # a release gets published. Restricted to release tags below.
   workflow_dispatch:
     inputs:
       ref:
-        description: Tag or ref to publish from
+        description: Release tag to publish (for example v1.2.3)
         required: true
         type: string
 
@@ -23,11 +23,35 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
     steps:
+      - name: Require a release tag
+        # Only tags are publishable. A branch is mutable and can carry
+        # unreviewed commits, and dispatch would otherwise accept any ref.
+        # The ref goes through the environment rather than being interpolated
+        # into the script, so it cannot be read as shell.
+        env:
+          REF: ${{ inputs.ref || github.ref }}
+        run: |
+          case "$REF" in
+            refs/tags/v*|v*) echo "publishing from $REF" ;;
+            *) echo "refusing to publish from '$REF': not a release tag"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
+
+      - name: Resolve the exact commit
+        id: resolve
+        # The publish job checks out this SHA rather than resolving the tag a
+        # second time. Two independent resolutions of the same ref can land on
+        # different commits, which would let dist/ come from one commit and the
+        # package.json version from another.
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -49,6 +73,9 @@ jobs:
     name: publish
     runs-on: ubuntu-latest
     needs: build
+    # Gives the repository a place to attach required reviewers or a branch/tag
+    # policy to the only job that can reach the registry.
+    environment: npm-publish
     permissions:
       contents: read
       # Required for npm Trusted Publishing: the workflow proves its identity to
@@ -59,7 +86,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          # The exact commit the artifact was built from, not the tag again.
+          ref: ${{ needs.build.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
