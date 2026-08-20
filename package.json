@@ -54,7 +54,7 @@
     "pack:local": "npm run build && npm pack"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.0.0",
     "oxfmt": "^0.64.0",
     "oxlint": "^1.79.0",
