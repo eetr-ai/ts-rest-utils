@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+
+    // Environment
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    // DOM supplies fetch/Response/Headers/FormData. The library uses only the
+    // platform types, never Node-specific APIs, so it type-checks the same way
+    // for browser, Node, and React Native consumers.
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+
+    // Outputs — tsup emits the build; tsc is used for type-checking only.
+    "noEmit": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    // Stricter type-checking
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // Module semantics
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "tsup.config.ts", "vitest.config.ts"]
+}

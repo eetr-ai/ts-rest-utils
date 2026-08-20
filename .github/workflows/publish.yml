@@ -1,0 +1,28 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  # Required for npm Trusted Publishing — the workflow proves its identity to
+  # the registry over OIDC, so no npm token is stored in this repository.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      # Trusted Publishing needs npm >= 11.5.1, which is newer than the version
+      # bundled with the Node runtime.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm run build
+      - run: npm publish --provenance --access public
