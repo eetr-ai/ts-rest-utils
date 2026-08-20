@@ -49,7 +49,7 @@ const REDACTED_HEADERS = new Set([
 ]);
 
 /** Catches `x-api-key`, `x-auth-token`, `x-session-secret`, and friends. */
-const REDACTED_PATTERN = /(?:token|secret|api-?key|credential|password|signature|assertion)/i;
+const REDACTED_PATTERN = /(?:token|secret|api[-_]?key|credential|password|signature|assertion)/i;
 
 /**
  * Query parameters whose values are never logged.
@@ -60,7 +60,7 @@ const REDACTED_PATTERN = /(?:token|secret|api-?key|credential|password|signature
  * applies here.
  */
 const REDACTED_PARAM =
-  /(?:token|secret|api-?key|credential|password|signature|assertion|^code$|^sig$)/i;
+  /(?:token|secret|api[-_]?key|credential|password|signature|assertion|^code$|^sig$)/i;
 
 /** Whether a header's value should be replaced before logging. */
 export function isSensitiveHeader(name: string): boolean {
