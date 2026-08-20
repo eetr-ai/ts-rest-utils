@@ -99,9 +99,28 @@ export function resolveBase(url: string, bases: Iterable<string>): string | unde
   let match: string | undefined;
 
   for (const base of bases) {
-    if (!base || !url.startsWith(base)) continue;
+    if (!base || !isUnderBase(url, base)) continue;
     if (match === undefined || base.length > match.length) match = base;
   }
 
   return match;
+}
+
+/**
+ * Whether `url` genuinely sits under `base`, rather than merely starting with
+ * its characters.
+ *
+ * A plain `startsWith` would report that `https://api.example.com.attacker.test`
+ * is under `https://api.example.com`, because the attacker's hostname continues
+ * where the trusted one ends. Since the usual reason to resolve a base is to
+ * decide which credential a request should carry, that answer is worth getting
+ * right: what follows the base has to be nothing at all, or a boundary that
+ * ends the authority — a path, a query, or a fragment.
+ */
+function isUnderBase(url: string, base: string): boolean {
+  const normalised = base.endsWith("/") ? base.slice(0, -1) : base;
+  if (!url.startsWith(normalised)) return false;
+
+  const rest = url.slice(normalised.length);
+  return rest === "" || rest.startsWith("/") || rest.startsWith("?") || rest.startsWith("#");
 }

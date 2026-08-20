@@ -68,8 +68,14 @@ export class TimeoutError extends RestError {
  */
 export class NetworkError extends RestError {
   constructor(context: RestErrorContext) {
-    const reason = context.cause instanceof Error ? context.cause.message : String(context.cause);
-    super(`${context.method} ${context.url} failed: ${reason}`, context);
+    super(`${context.method} ${context.url} failed: ${describeCause(context.cause)}`, context);
     this.name = "NetworkError";
   }
+}
+
+/** A readable reason for a failure, including when there is no cause to read. */
+function describeCause(cause: unknown): string {
+  if (cause === undefined || cause === null) return "the request did not complete";
+  if (cause instanceof Error) return cause.message || cause.name;
+  return String(cause);
 }

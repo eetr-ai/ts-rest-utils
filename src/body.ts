@@ -144,7 +144,17 @@ async function decodeAuto(response: Response): Promise<unknown> {
   return response.blob();
 }
 
-/** The response's declared media type, without parameters. */
+/**
+ * The response's declared media type, lower-cased and without parameters.
+ *
+ * `application/json; charset=utf-8` becomes `application/json`, so a caller can
+ * compare it for equality. The unmodified header is still on `headers` for
+ * anyone who needs the charset or a multipart boundary.
+ */
 export function contentTypeOf(response: Response): string {
-  return response.headers.get("Content-Type") ?? "";
+  const header = response.headers.get("Content-Type");
+  if (!header) return "";
+
+  const [mediaType = ""] = header.split(";");
+  return mediaType.trim().toLowerCase();
 }

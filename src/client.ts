@@ -3,6 +3,7 @@ import { NetworkError, TimeoutError } from "./errors.js";
 import { type Logger, noopLogger } from "./logger.js";
 import { ApiResponse } from "./response.js";
 import {
+  type ResolvedRetryPolicy,
   type RetryOptions,
   delayForAttempt,
   resolveRetryPolicy,
@@ -383,7 +384,7 @@ export class RestClient<Ctx = unknown> {
       }
 
       if (!isLastAttempt && (await policy.retryOn(retryContext))) {
-        const delay = retryAfterMs(response) ?? delayForAttempt(policy, attempt);
+        const delay = retryDelay(policy, response, attempt);
         await discard(response);
         logger.retry?.(
           { method, url, headers, attempt, status: response.status, durationMs },
@@ -526,6 +527,25 @@ export class RestClient<Ctx = unknown> {
       return false;
     }
   }
+}
+
+/**
+ * How long to wait before the next attempt.
+ *
+ * A server's `Retry-After` is preferred when the policy allows it — it knows
+ * when it will be ready and the client does not — but it is still clamped to
+ * `maxDelayMs`. The header is a value from the far end of the connection, and
+ * an unbounded one (a misconfiguration, or a `Retry-After: 86400`) would
+ * otherwise park the caller for as long as it asked.
+ */
+function retryDelay(policy: ResolvedRetryPolicy, response: Response, attempt: number): number {
+  const backoff = delayForAttempt(policy, attempt);
+  if (!policy.respectRetryAfter) return backoff;
+
+  const requested = retryAfterMs(response);
+  if (requested === undefined) return backoff;
+
+  return Math.min(requested, policy.maxDelayMs);
 }
 
 /**
