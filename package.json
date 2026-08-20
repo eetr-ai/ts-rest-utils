@@ -1,6 +1,6 @@
 {
   "name": "@eetr/ts-rest-utils",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A small, dependency-free REST client for TypeScript — typed responses, pluggable auth, retries, and timeouts.",
   "keywords": [
     "api",
