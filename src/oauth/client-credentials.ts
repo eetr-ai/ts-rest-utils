@@ -263,7 +263,17 @@ async function requestToken(config: ClientCredentialsConfig): Promise<StoredToke
       payload = await readJson(response, config.tokenUrl);
     } catch (cause) {
       if (controller.signal.aborted) throw deadlineExpired(cause);
-      throw cause;
+      // readJson already shapes a non-JSON body into an OAuthError; anything
+      // else reaching here is the connection dropping mid-read, which callers
+      // should still be able to catch as one rather than as a raw TypeError.
+      if (cause instanceof OAuthError) throw cause;
+      throw new OAuthError({
+        error: "network_error",
+        errorDescription: cause instanceof Error ? cause.message : String(cause),
+        status: response.status,
+        tokenUrl: config.tokenUrl,
+        cause,
+      });
     }
 
     if (!response.ok) {

@@ -350,6 +350,34 @@ describe("failures", () => {
     ).rejects.toMatchObject({ name: "OAuthError", error: "timeout" });
   });
 
+  it("wraps a connection dropped mid-body as an OAuthError", async () => {
+    // Everything out of this module should be catchable as one type.
+    const dropping = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"access_token":'));
+              controller.error(new Error("ECONNRESET"));
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      createClientCredentialsAuth({ ...base, fetch: dropping }).getToken(),
+    ).rejects.toMatchObject({ name: "OAuthError", error: "network_error" });
+  });
+
+  it("still reports a non-JSON body as invalid_response, not as a network error", async () => {
+    // readJson already shapes this one; it must not be re-wrapped.
+    const fetch = tokenEndpoint(() => new Response("<html>nope</html>", { status: 502 }));
+    await expect(createClientCredentialsAuth({ ...base, fetch }).getToken()).rejects.toMatchObject({
+      error: "invalid_response",
+    });
+  });
+
   it("wraps a transport failure", async () => {
     // Named for what it is: a local called `fetch` makes `typeof fetch` refer
     // to itself rather than to the global.
