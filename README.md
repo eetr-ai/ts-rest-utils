@@ -40,21 +40,34 @@ const response = await api.get<User[]>("/users");
 response.getOrDefault([]); // the body, or [] if it failed
 response.getOrNull(); // the body, or null
 response.getOrThrow(); // the body, or throw an HttpError
-response.getOrThrow(new NotFoundError()); // the body, or throw your own error
-
 response.getOrDefault([], 201); // require exactly 201, not just any 2xx
+```
+
+`getOrThrow` also takes a throwable of your own:
+
+```ts
+class UserNotFound extends Error {}
+
+const user = (await api.get<User>("/users/me")).getOrThrow(new UserNotFound());
 ```
 
 `ok`, `status`, `bodyType`, `headers`, and the underlying `raw` response are all
 available. The check is on the status, never on truthiness — an empty array from
 a successful request is returned as-is, not swapped for the default.
 
-Only a network failure, a timeout, or a cancellation throws.
+A response arriving is not an error, whatever its status — so a request throws
+only when there is no response to hand back: a network failure (`NetworkError`),
+an expired deadline (`TimeoutError`), or a cancelled signal. Two other cases
+throw for the same reason: a body the server declared as JSON that does not
+parse, and a configuration mistake such as a relative path with no `baseUrl` to
+resolve it against. Anything your own `authProvider` throws propagates
+unchanged.
 
 ## Authentication
 
-Every credential scheme is an `authProvider`: an async function returning
-headers, called once per attempt. The library ships none of them, which is what
+Every credential scheme is an `authProvider`: a function returning headers,
+called once per attempt. It may be synchronous or asynchronous, and may return
+nothing at all when a particular request needs no credential. The library ships none of them, which is what
 keeps it dependency-free and usable everywhere.
 
 ```ts
@@ -106,6 +119,9 @@ Configuring `onAuthFailure` implies a second attempt, since a refresh with no
 retry left could never use the new credential.
 
 ### A cloud identity token, per backend
+
+Server-side only, like any recipe holding an ambient credential — the workload
+identity behind it is not something a browser or a mobile app has.
 
 `resolveBase` picks which backend a URL belongs to, so a provider can mint the
 right credential for it. It matches on URL boundaries, not string prefixes, so
@@ -173,8 +189,18 @@ await forRequest.get("/preferences");
 Per-request options take the same shape, plus `method`, `body`, `query`,
 `service`, `signal`, and `init`.
 
-Headers layer in precedence order: `defaultInit` → body content type → client
-`headers` → `authProvider` → per-call `headers`.
+Headers layer in precedence order, lowest first:
+
+1. `defaultInit.headers`
+2. `init.headers` on the individual request
+3. the body's own content type, when one was inferred
+4. the client's `headers`
+5. `authProvider`
+6. the per-call `headers`
+
+So a per-call header beats a credential, and a credential beats a client
+default. All six are merged into one set — nothing left on a `RequestInit` is
+dropped.
 
 ## Bodies
 
